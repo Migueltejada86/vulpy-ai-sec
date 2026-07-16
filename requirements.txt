@@ -106,6 +106,7 @@ pdfplumber==0.11.10
 peewee==3.19.0
 pendulum==3.2.0
 pillow==12.3.0
+pip-audit
 platformdirs==4.10.0
 portalocker==2.7.0
 posthog==5.4.0

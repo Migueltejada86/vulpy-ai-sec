@@ -19,7 +19,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install semgrep crewai crewai-tools python-dotenv openai groq pip-audit
+        pip install -r requirements.txt
 
     - name: 1. SAST con Vulpy CrewAI
       env:
