@@ -9,42 +9,47 @@ on:
 jobs:
   security:
     runs-on: ubuntu-latest
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Python 3.11
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-    
+
     - name: Install deps
       run: |
         pip install -r requirements.txt
         pip install cyclonedx-bom semgrep
-        
+
     - name: Generate SBOM
       run: cyclonedx-py venv -o vulpy-sbom.json
-      
+
     - name: Run Vulpy AI
       env:
         GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-      run: python main.py
-      continue-on-error: true  # para que genere el reporte aunque falle
-      
+      run: python main.py || true # || true para que no corte el job
+
+    - name: Verify Report Exists
+      run: |
+        if [! -f vulpy-report.md ]; then
+          echo "# Error: No report generated" > vulpy-report.md
+        fi
+
     - name: Upload Report
       uses: actions/upload-artifact@v4
       with:
         name: vulpy-report
         path: vulpy-report.md
-        
+
     - name: Comment PR
       if: github.event_name == 'pull_request'
       uses: peter-evans/create-or-update-comment@v5
       with:
         issue-number: ${{ github.event.pull_request.number }}
         body-path: vulpy-report.md
-        
+
     - name: Security Gate
       run: |
         if grep -q "FAIL" vulpy-report.md; then

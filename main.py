@@ -2,17 +2,18 @@ import os
 import sys
 import json
 import subprocess
+from datetime import datetime
 from crewai import Agent, Task, Crew, Process
-from agents.llm_client import llm_call, llm
-from agents.detector import run_detection, run_semgrep_on_code
+from agents.llm_client import llm
+from agents.detector import run_detection, load_sbom
 from agents.explainer import explain_finding
 from agents.patcher import propose_patch
 from agents.tester import generate_test
-###
 from agents.redteam import redteam_analysis
 
 SBOM_FILE = "vulpy-sbom.json"
 
+###
 def load_sbom():
     """Lee el SBOM y extrae dependencias con versión"""
     if not os.path.exists(SBOM_FILE):
@@ -111,23 +112,36 @@ crew = Crew(
 
 if __name__ == "__main__":
     print("Starting Vulpy AI Security Pipeline...")
-    
-    # Asegurar que SBOM exista
+
     if not os.path.exists(SBOM_FILE):
-        print("Generando SBOM...")
         subprocess.run(["cyclonedx-py", "venv", "-o", SBOM_FILE])
-    
+
     result = crew.kickoff()
-    
-    with open("vulpy-report.md", "w") as f:
-        f.write(f"# Vulpy AI Report\n{result}")
-    
-    print("\nReport generated: vulpy-report.md")
-    
-    # CI/CD GATE
-    if "FAIL" in str(result):
-        print("::error::Security gate FAILED")
+    result_str = str(result)
+
+    # PASO 1: ESCRIBIR REPORTE SIEMPRE
+    report = f"""# Vulpy AI Security Report
+
+**Timestamp**: {datetime.now()}
+**Branch**: sca-cicd
+
+## Summary
+{result_str}
+
+## Details
+Pipeline ejecutado con 5 agentes: Detector, SCA, Explainer, Patcher, RedTeam.
+"""
+    with open("vulpy-report.md", "w", encoding="utf-8") as f:
+        f.write(report)
+
+    print("Report generated: vulpy-report.md")
+
+    # PASO 2: AHORA SI HACER EL GATE
+    if "FAIL" in result_str or "Critical" in result_str or "High" in result_str:
+        print("::error::Security gate FAILED - Critical/High vulnerabilities found")
         sys.exit(1)
     else:
         print("Security gate PASSED")
         sys.exit(0)
+####
+
