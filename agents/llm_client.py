@@ -1,6 +1,5 @@
 import os
 from langchain_groq import ChatGroq
-from groq import Groq
 
 llm = ChatGroq(
     groq_api_key=os.getenv("GROQ_API_KEY"),
@@ -9,5 +8,4 @@ llm = ChatGroq(
 )
 
 def llm_call(prompt: str) -> str:
-    response = llm.invoke(prompt)
-    return response.content
+    return llm.invoke(prompt).content
