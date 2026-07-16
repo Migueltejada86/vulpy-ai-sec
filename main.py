@@ -109,39 +109,34 @@ crew = Crew(
     process=Process.sequential,
     verbose=2
 )
-
 if __name__ == "__main__":
     print("Starting Vulpy AI Security Pipeline...")
+    report = "# Vulpy AI Security Report\n"
+    gate_status = "PASS"
+    
+    try:
+        if not os.path.exists(SBOM_FILE):
+            subprocess.run(["cyclonedx-py", "venv", "-o", SBOM_FILE])
 
-    if not os.path.exists(SBOM_FILE):
-        subprocess.run(["cyclonedx-py", "venv", "-o", SBOM_FILE])
+        result = crew.kickoff()
+        result_str = str(result)
+        report += f"## Results\n{result_str}\n"
+        
+        if "FAIL" in result_str or "Critical" in result_str or "High" in result_str:
+            gate_status = "FAIL"
 
-    result = crew.kickoff()
-    result_str = str(result)
+    except Exception as e:
+        report += f"## ERROR\nEl pipeline fallo: {str(e)}\n"
+        gate_status = "FAIL"
+        print(f"::error::Pipeline error: {e}")
 
-    # PASO 1: ESCRIBIR REPORTE SIEMPRE
-    report = f"""# Vulpy AI Security Report
+    finally:
+        # ESTO SIEMPRE SE EJECUTA
+        report += f"\n**Gate**: {gate_status}\n**Timestamp**: {datetime.now()}"
+        with open("vulpy-report.md", "w", encoding="utf-8") as f:
+            f.write(report)
+        print("Report generated: vulpy-report.md")
 
-**Timestamp**: {datetime.now()}
-**Branch**: sca-cicd
-
-## Summary
-{result_str}
-
-## Details
-Pipeline ejecutado con 5 agentes: Detector, SCA, Explainer, Patcher, RedTeam.
-"""
-    with open("vulpy-report.md", "w", encoding="utf-8") as f:
-        f.write(report)
-
-    print("Report generated: vulpy-report.md")
-
-    # PASO 2: AHORA SI HACER EL GATE
-    if "FAIL" in result_str or "Critical" in result_str or "High" in result_str:
-        print("::error::Security gate FAILED - Critical/High vulnerabilities found")
+    if gate_status == "FAIL":
         sys.exit(1)
-    else:
-        print("Security gate PASSED")
-        sys.exit(0)
-####
-
+    sys.exit(0)
