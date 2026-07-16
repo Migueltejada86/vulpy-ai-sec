@@ -7,3 +7,7 @@ PyJWT
 pyotp
 qrcode
 requests
+PyGithub
+groq
+semgrep
+python-dotenv
