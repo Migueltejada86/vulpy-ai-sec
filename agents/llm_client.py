@@ -1,5 +1,6 @@
 import os
 from langchain_groq import ChatGroq
+from groq import Groq
 
 llm = ChatGroq(
     groq_api_key=os.getenv("GROQ_API_KEY"),
