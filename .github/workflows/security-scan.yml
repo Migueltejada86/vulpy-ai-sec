@@ -4,33 +4,29 @@ on:
   push:
     branches: [sca-cicd]
   pull_request:
-    branches: [main]
+    branches: 
 
 jobs:
   security:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write # necesario para comentar en PR
+      pull-requests: write
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v5
+    - uses: actions/setup-python@v5
       with:
         python-version: '3.11'
         cache: 'pip'
 
-    - name: Install dependencies
-      run: |
+    - run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install cyclonedx-bom semgrep crewai langchain-groq
 
-    - name: Generate SBOM
-      run: cyclonedx-py venv -o vulpy-sbom.json
+    - run: cyclonedx-py venv -o vulpy-sbom.json
 
     - name: Run Vulpy AI Pipeline
       env:
@@ -38,37 +34,31 @@ jobs:
       run: python main.py || echo "Pipeline finished with errors. Continuing..."
 
     - name: Ensure Report Exists
-      if: always() # se ejecuta aunque falle el paso anterior
+      if: always()
       run: |
-        if [! -f vulpy-report.md ]; then
+        if [ ! -f vulpy-report.md ]; then
           echo "# Vulpy AI Security Report" > vulpy-report.md
-          echo "" >> vulpy-report.md
-          echo "**Status**: ERROR - Report could not be generated" >> vulpy-report.md
+          echo "**Status**: ERROR - Pipeline failed before report generation" >> vulpy-report.md
           echo "**Timestamp**: $(date)" >> vulpy-report.md
         fi
-        echo "--- Report Content ---"
         cat vulpy-report.md
 
-    - name: Upload Report Artifact
+    - uses: actions/upload-artifact@v4
       if: always()
-      uses: actions/upload-artifact@v4
       with:
         name: vulpy-report
         path: vulpy-report.md
-        retention-days: 7
 
-    - name: Comment PR with Report
+    - name: Comment PR
       if: github.event_name == 'pull_request' && always()
       uses: peter-evans/create-or-update-comment@v5
       with:
         issue-number: ${{ github.event.pull_request.number }}
         body-path: vulpy-report.md
-        edit-mode: replace
 
     - name: Security Gate
       run: |
-        if grep -qi "FAIL\|Critical\|High" vulpy-report.md; then
-          echo "::error::Security gate FAILED - Critical or High vulnerabilities found"
+        if grep -qi "FAIL\|Critical\|High\|ERROR" vulpy-report.md; then
+          echo "::error::Security gate FAILED"
           exit 1
         fi
-        echo "Security gate PASSED"
