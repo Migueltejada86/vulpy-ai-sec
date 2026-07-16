@@ -1,7 +1,4 @@
-### Vulpy v1.0 
-
-Crea/reemplaza el `README.md` con esto:
-# ⚡  Vulpy - AI-Enabled Secure Code Scanner ⚡
+### Vulpy v1.0 ⚡ - AI-Enabled Secure Code Scanner ⚡
 
 Pipeline de seguridad multi-agente que automatiza SAST, code review y auto-patching usando LLMs.
 
