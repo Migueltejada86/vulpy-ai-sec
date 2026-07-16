@@ -29,7 +29,7 @@ jobs:
           pip install 'cyclonedx-bom==7.3.0'
 
       - name: 1. Generate Python SBOM
-        run: cyclonedx-py requirements requirements.txt -o vulpy-sbom.json
+        run: cyclonedx-py venv -o vulpy-sbom.json
 
       - name: 2. SAST + SCA con Vulpy CrewAI
         env:
