@@ -11,8 +11,6 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
 
     - name: Set up Python 3.10
       uses: actions/setup-python@v5
@@ -21,19 +19,32 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install semgrep crewai crewai-tools python-dotenv openai
+        pip install semgrep crewai crewai-tools python-dotenv openai pip-audit
 
-    - name: Run Vulpy CrewAI Scan
+    - name: 1. SAST con Vulpy CrewAI
       env:
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       run: |
         python main.py ./ > vulpy-report.md
+        echo "\n## SCA Report" >> vulpy-report.md
 
-    - name: Upload Report Artifact
+    - name: 2. SCA con pip-audit
+      run: |
+        pip-audit --format=json >> vulpy-report.md || true
+        echo "\n## SBOM Report" >> vulpy-report.md
+
+    - name: 3. SBOM con Syft
+      uses: anchore/sbom-action@v0
+      with:
+        path: ./
+        format: spdx-json
+        output-file: sbom.spdx.json
+
+    - name: Upload SBOM Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: vulpy-security-report
-        path: vulpy-report.md
+        name: sbom
+        path: sbom.spdx.json
 
     - name: Comment PR with Results
       uses: peter-evans/create-or-update-comment@v4
