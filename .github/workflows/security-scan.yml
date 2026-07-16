@@ -19,7 +19,7 @@ jobs:
     - uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-        cache: 'pip'
+        cache: 'pip'  # <-- : no ;
 
     - run: |
         python -m pip install --upgrade pip
@@ -30,7 +30,7 @@ jobs:
 
     - name: Run Vulpy AI Pipeline
       env:
-        GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}  # <-- GROQ no GROO
       run: python main.py || echo "Pipeline finished with errors. Continuing..."
 
     - name: Ensure Report Exists
@@ -38,7 +38,7 @@ jobs:
       run: |
         if [ ! -f vulpy-report.md ]; then
           echo "# Vulpy AI Security Report" > vulpy-report.md
-          echo "**Status**: ERROR - Pipeline failed before report generation" >> vulpy-report.md
+          echo "**Status**: ERROR - Pipeline failed" >> vulpy-report.md
           echo "**Timestamp**: $(date)" >> vulpy-report.md
         fi
         cat vulpy-report.md
@@ -58,7 +58,7 @@ jobs:
 
     - name: Security Gate
       run: |
-        if grep -qi "FAIL\|Critical\|High\|ERROR" vulpy-report.md; then
+        if [ -f vulpy-report.md ] && grep -qi "FAIL\|Critical\|High\|ERROR" vulpy-report.md; then
           echo "::error::Security gate FAILED"
           exit 1
         fi
