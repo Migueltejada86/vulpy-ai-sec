@@ -2,128 +2,132 @@ import os
 import sys
 import json
 import subprocess
-from pathlib import Path
 from crewai import Agent, Task, Crew, Process
-from langchain_groq import ChatGroq
+from agents.llm_client import llm_call, llm
+from agents.detector import run_detection, run_semgrep_on_code
+from agents.explainer import explain_finding
+from agents.patcher import propose_patch
+from agents.tester import generate_test
+###
+from agents.redteam import redteam_analysis
 
-# 1. CONFIG
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 SBOM_FILE = "vulpy-sbom.json"
-SEMGREP_OUTPUT = "semgrep-results.json"
 
-if not GROQ_API_KEY:
-    print("ERROR: GROQ_API_KEY not set")
-    sys.exit(1)
+def load_sbom():
+    """Lee el SBOM y extrae dependencias con versión"""
+    if not os.path.exists(SBOM_FILE):
+        return []
+    with open(SBOM_FILE) as f:
+        sbom = json.load(f)
+    return [f"{c['name']}@{c.get('version')}" for c in sbom.get("components", [])]
 
-llm = ChatGroq(
-    groq_api_key=GROQ_API_KEY,
-    model_name="llama-3.3-70b-versatile",
-    temperature=0.1
-)
-
-# 2. AGENTES ALINEADOS AL JD
+# 1. ENVOLVEMOS AGENTES EN CREWAI
+llm_instance = llm
 
 sast_agent = Agent(
-    role='SAST Security Engineer',
-    goal='Find code vulnerabilities using OWASP Top 10 and CWE mapping. Analyze semgrep results.',
-    backstory='Expert in static analysis. You map findings to OWASP Top 10 and CWE. You do secure code review.',
-    llm=llm,
+    role='SAST + SCA Detector',
+    goal='Detectar vulnerabilidades en código y dependencias',
+    backstory='Usas Semgrep y análisis de SBOM. Mapeas a OWASP Top 10.',
+    llm=llm_instance,
+    tools=[run_detection, load_sbom],
     verbose=True
 )
 
-sca_agent = Agent(
-    role='SCA Dependency Analyst', 
-    goal='Analyze SBOM for known vulnerabilities. Check transitive dependencies and CVEs.',
-    backstory='You are an expert in Software Bill of Materials and open-source vulnerability scanning. You correlate pkg:purl with CVE database.',
+
+redteam_agent = Agent(
+    role='Red Team Lead',
+    goal='Priorizar riesgos, mapear OWASP/CWE/ASVS y decidir gate',
+    backstory='Piensas como atacante. Rompes builds inseguros.',
     llm=llm,
+    tools=[redteam_analysis],
+    verbose=True
+)
+
+
+explainer_agent = Agent(
+    role='Security Explainer',
+    goal='Explicar vulnerabilidades a devs junior en español',
+    backstory='Traduces CWE a "qué significa para mi app"',
+    llm=llm_instance,
+    tools=[explain_finding],
+    verbose=True
+)
+
+patcher_agent = Agent(
+    role='Auto Patcher',
+    goal='Generar parches seguros y tests',
+    backstory='Senior Python Dev que arregla vulnerabilidades',
+    llm=llm_instance,
+    tools=[propose_patch, generate_test],
     verbose=True
 )
 
 redteam_agent = Agent(
     role='Red Team Lead',
-    goal='Prioritize risks and suggest exploits. Map findings to OWASP Top 10 and ASVS.',
-    backstory='You think like an attacker. You validate if a vuln is exploitable and suggest fixes.',
-    llm=llm,
+    goal='Priorizar riesgos y decidir si el CI/CD debe fallar',
+    backstory='Piensas como atacante. Sigues ASVS y OWASP',
+    llm=llm_instance,
     verbose=True
 )
 
-# 3. TASKS
-
-def load_sbom():
-    with open(SBOM_FILE) as f:
-        sbom = json.load(f)
-    components = []
-    for c in sbom.get("components", []):
-        components.append(f"{c['name']}@{c.get('version', 'unknown')} - purl: {c.get('purl', '')}")
-    return "\n".join(components)
-
-def run_semgrep():
-    print("Running Semgrep SAST...")
-    subprocess.run([
-        "semgrep", "--config=auto", "--json", "-o", SEMGREP_OUTPUT, "."
-    ], capture_output=True)
-    with open(SEMGREP_OUTPUT) as f:
-        return json.load(f)
-
-sbom_data = load_sbom()
-semgrep_data = run_semgrep()
-
-sast_task = Task(
-    description=f"""Analyze these Semgrep findings and map to OWASP Top 10 and CWE.
-    Findings: {json.dumps(semgrep_data)[:4000]}
-    Return: Vulnerability, Severity, OWASP, CWE, File, Line, Fix""",
+# 2. TASKS DEL PIPELINE
+deteccion_task = Task(
+    description="""1. Corre SAST con semgrep en ./test_repo 
+    2. Lee vulpy-sbom.json y busca CVEs. 
+    Foco en chromadb@1.1.1 y click@8.1.8""",
     agent=sast_agent,
-    expected_output="Markdown table of SAST findings with OWASP/CWE mapping"
+    expected_output="Lista de hallazgos SAST + SCA con archivo, linea y severidad"
 )
 
-sca_task = Task(
-    description=f"""Analyze this SBOM for known CVEs. Focus on Critical and High.
-    SBOM Components:
-    {sbom_data}
-    Known vulnerable: chromadb@1.1.1 CVE-2026-45829 SQLi, click@8.1.8 CVE-2026-7246 Command Injection
-    Return: Package, Version, CVE, Severity, CVSS, Description, Fix Version""",
-    agent=sca_agent,
-    expected_output="Markdown table of SCA findings with CVEs"
+explicacion_task = Task(
+    description="Para cada hallazgo, explica: 1.Problema 2.Explotación 3.Impacto 4.Regla de oro",
+    agent=explainer_agent,
+    context=[deteccion_task],
+    expected_output="Explicaciones en español para cada vuln"
 )
 
-consolidation_task = Task(
-    description="""Consolidate SAST and SCA results. Prioritize by risk.
-    Add: 1. Summary 2. Top 3 risks 3. CI/CD Gate recommendation: FAIL or PASS
-    Follow ASVS and OWASP standards.""",
+patch_task = Task(
+    description="Genera el código corregido + patch diff + test pytest para cada hallazgo",
+    agent=patcher_agent,
+    context=[explicacion_task],
+    expected_output="Código corregido y tests"
+)
+
+gate_task = Task(
+    description="""Consolida todo. Si hay Critical o High en SCA/SAST devuelve FAIL.
+    Si no, PASS. Sigue OWASP ASVS""",
     agent=redteam_agent,
-    context=[sast_task, sca_task],
-    expected_output="Executive security report in Markdown"
+    context=[deteccion_task, explicacion_task, patch_task],
+    expected_output="Reporte final + DECISION: PASS o FAIL"
 )
 
-# 4. CREW
+# 3. CREW
 crew = Crew(
-    agents=[sast_agent, sca_agent, redteam_agent],
-    tasks=[sast_task, sca_task, consolidation_task],
+    agents=[sast_agent, explainer_agent, patcher_agent, redteam_agent],
+    tasks=[deteccion_task, explicacion_task, patch_task, gate_task],
     process=Process.sequential,
     verbose=2
 )
 
-# 5. RUN
-print("Starting Vulpy AI Security Scan...")
-result = crew.kickoff()
-
-report = f"""# Vulpy AI Security Report
-
-{result}
-
----
-*Generated by Vulpy v2.0 - AI-Enabled AppSec*
-"""
-
-with open("vulpy-report.md", "w") as f:
-    f.write(report)
-
-print("Report generated: vulpy-report.md")
-
-# 6. CI/CD GATE
-if "Critical" in result or "High" in result:
-    print("::error::Security gate FAILED. Critical/High vulnerabilities found.")
-    sys.exit(1)
-else:
-    print("Security gate PASSED")
-    sys.exit(0)
+if __name__ == "__main__":
+    print("Starting Vulpy AI Security Pipeline...")
+    
+    # Asegurar que SBOM exista
+    if not os.path.exists(SBOM_FILE):
+        print("Generando SBOM...")
+        subprocess.run(["cyclonedx-py", "venv", "-o", SBOM_FILE])
+    
+    result = crew.kickoff()
+    
+    with open("vulpy-report.md", "w") as f:
+        f.write(f"# Vulpy AI Report\n{result}")
+    
+    print("\nReport generated: vulpy-report.md")
+    
+    # CI/CD GATE
+    if "FAIL" in str(result):
+        print("::error::Security gate FAILED")
+        sys.exit(1)
+    else:
+        print("Security gate PASSED")
+        sys.exit(0)
